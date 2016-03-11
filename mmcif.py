@@ -37,20 +37,32 @@ class LineIterator(object):
             line = self._next_or_none(self._lines)
         return line
 
+    def _get_tokens(self, line):
+        tokens = SPLIT_RE.split(line)[1::2]
+        tokens = [token[1:-1] if token[0] == token[-1] and token[0] in '\'"'
+                  else token for token in tokens]
+        totens = [token.strip() for token in tokens]
+        return tokens
 
     def peek(self):
         line = self._pop_or_next()
-        if line is not None and line[0] == ';':
+        if line and line[0] == ';':
+            line = line[1:]
             while True:
                 next_line = self._pop_or_next()
                 if next_line is None or next_line.startswith(';'):
                     break
                 else:
                     line = line[:-1] + next_line
+            tokens = [line]
+        elif isinstance(line, str):
+            tokens = self._get_tokens(line)
+        else:
+            tokens = line
 
-        self._backlog.append(line)
+        self._backlog.append(tokens)
 
-        return line
+        return tokens
 
 
 class Reader(object):
@@ -64,16 +76,15 @@ class Reader(object):
         lines_iter = LineIterator(lines)
         for line in lines_iter:
             for start, method in self.record_starts.items():
-                if line.startswith(start):
+                if line and line[0].startswith(start):
                     method(line, lines_iter)
                     break
             else:
                 warnings.warn('Unexpected line "{}".'.format(line))
 
-    def _parse_entry(self, line, lines_iter):
-        tokens = self._get_tokens(line)
+    def _parse_entry(self, tokens, lines_iter):
         if len(tokens) < 2:
-            tokens += self._get_tokens(next(lines_iter))
+            tokens += next(lines_iter)
         root, entry = tokens[0][1:].split('.')
         self._records[root] = self._records.get(root, collections.OrderedDict())
         self._records[root][entry] = ' '.join(tokens[1:])
@@ -84,34 +95,27 @@ class Reader(object):
     def _parse_loop(self, line, lines_iter):
         keys = []
         entries = []
-        while lines_iter.peek().startswith('_'):
+        while lines_iter.peek()[0].startswith('_'):
             line = next(lines_iter)
             try:
-                root, key = line[1:].strip().split('.')
+                root, key = line[0][1:].strip().split('.')
             except ValueError as e:
                 print(line)
                 raise e
             keys.append(key)
         while not self._is_record(lines_iter.peek()):
-            line = next(lines_iter)
-            tokens = self._get_tokens(line)
+            tokens = next(lines_iter)
             while len(tokens) < len(keys):
-                tokens += self._get_tokens(next(lines_iter))
+                tokens += next(lines_iter)
             entry = collections.OrderedDict(list(zip(keys, tokens)))
             entries.append(entry)
         self._records[root] = entries
 
     def _is_record(self, line):
-        if line is None:
+        if not line:
             return False
         for start in self.record_starts.keys():
-            if line.startswith(start):
+            if line[0].startswith(start):
                 return True
         return False
 
-    def _get_tokens(self, line):
-        tokens = SPLIT_RE.split(line)[1::2]
-        tokens = [token[1:-1] if token[0] == token[-1] and token[0] in '\'"'
-                  else token for token in tokens]
-        totens = [token.strip() for token in tokens]
-        return tokens
